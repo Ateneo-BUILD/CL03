@@ -113,6 +113,17 @@ The licence covers the specification and nothing else:
   specification.
 - The implementations listed above are separate works, under their own
   terms.
+- The [code of conduct](CODE_OF_CONDUCT.md) is adapted from the Contributor
+  Covenant, which that file credits.
+
+## Contributing
+
+Questions, corrections and proposals are welcome.
+[CONTRIBUTING.md](CONTRIBUTING.md) says how to send one, and how a change
+reaches the specification. A security flaw is reported privately, as
+[SECURITY.md](SECURITY.md) describes, and not in an issue. The
+[code of conduct](CODE_OF_CONDUCT.md) applies to everyone who takes part,
+and [CONTRIBUTORS.md](CONTRIBUTORS.md) names those who have contributed.
 
 ## Prepared by
 
@@ -122,5 +133,4 @@ Management, Ateneo de Manila University.
 [trl.ph](https://trl.ph) · [ateneo.edu/jgsom/build](https://ateneo.edu/jgsom/build)
 
 The author and the contact for the specification are named on the cover and
-in the colophon of each printed edition. To ask about the specification or
-report an error in it, open an issue in this repository.
+in the colophon of each printed edition.
