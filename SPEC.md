@@ -4,10 +4,10 @@
 
 | | |
 |---|---|
-| **Specification** | v1.2 |
+| **Specification** | v1.3 |
 | **Wire format** | v1 |
-| **Date** | 12 November 2026 |
-| **As printed** | [PDF, A4](pdf/cl03-spec%20-%20v1.2%20-%20A4.pdf) · [PDF, Letter](pdf/cl03-spec%20-%20v1.2%20-%20Letter.pdf) |
+| **Date** | 18 November 2026 |
+| **As printed** | [PDF, A4](pdf/cl03-spec%20-%20v1.3%20-%20A4.pdf) · [PDF, Letter](pdf/cl03-spec%20-%20v1.3%20-%20Letter.pdf) |
 | **Licence** | [CC BY 4.0](LICENSE) |
 
 > This is the specification as printed. It is written in the repository of
@@ -34,7 +34,9 @@ pass through `wire.py`: it is built by `accounts/pairing.py` here and
 `ios/OfflineVerifier/Net`. It has no vectors -- see §13.3 -- so for now this
 document is the only thing holding the implementations together, which is the
 reverse of the arrangement above. Treat a disagreement there as a question,
-not as a settled answer. §14, the revocation feed, has a reference since the
+not as a settled answer. §19, the key file, has a reference,
+`ovcrypto/keyfile.py`, with vectors, which OVX's reader (`ios/OVX/KeyFiles`)
+agrees with. §14, the revocation feed, has a reference since the
 2026-11 audit: `ovcrypto/feed.py`, with vectors (§14.3). §17, attachments and
 their part symbols, has had one from the start: `ovcrypto/attachments.py`,
 with vectors (§17.6).
@@ -451,6 +453,23 @@ and one that does not signs the bare challenge (2026-11 audit, F003). The
 context means no "challenge" a server hands out can make the Enclave key sign
 any other message; a server MAY refuse the bare form once no device uses it.
 
+**The phone and the app** (§13.3), both OPTIONAL and both in the pairing
+request and in every `/keys/` request:
+- `phone`: base64 of the 16-byte phone id for the site the device paired with.
+  At pairing, that is the code's host.
+- `app`: `{"id": "<bundle id>", "name": "...", "version": "...", "build":
+  "..."}`, what the app says it is.
+
+A server keeps them for display and for §13.3's grouping. It learns them only
+from a pairing or from a sync whose signature and App Attest passed, ignores
+malformed values rather than refusing the request, and never lets them grant
+anything.
+
+**A sync code** sent as `code` is closed out only by a device of the phone and
+account it was made for. One that does not apply is not spent, and does not
+fail the sync, which the signature authorised and not the code: the answer
+says `"code": "applied"` or `"code": "not_applied"`.
+
 With App Attest (2026-11 audit, F004), the request also carries `assertion`,
 the App Attest assertion over the decoded challenge, by the key attested at
 pairing. A server checks it against that key, never the Enclave key, and its
@@ -585,6 +604,17 @@ involution — that is what lets a lookup succeed from either bucket.
 problem causes a verifier to reject a valid document, which is the most likely
 real-world failure of this design.
 
+A verifier meets codes sealed to keys it does not hold: another site's, or a
+key file's (§19), and their epoch numbers coincide with its own. It MAY
+therefore present `device_stale` (§8, step 2) and `tampered` from step 3
+alike, as no key it holds opening the code (`no_matching_key`, §18.2). It
+cannot tell such a code from one altered after sealing. It MUST then say
+nothing against the document, and MUST offer a sync, when it has a site to
+sync with, for a code newer than its keys. The verdict is unchanged.
+
+A code read with a key file (§19) is presented as §19.5 says. Its verdict is
+unchanged too.
+
 ## 12. Portrait symbol
 
 ```
@@ -708,21 +738,58 @@ operation happens over HTTPS afterwards.
 4. A payload that is not this JSON — a credential QR being the likely
    confusion — MUST be reported as "not a pairing code" rather than as a
    malformed one.
+5. **A `sync` or `rekey` code concerns a phone** (§13.3). Any of an
+   implementation's apps on that phone acts on it for its own registration
+   with the code's site, in this order:
+   1. A code naming the app's own record acts on it.
+   2. From a site the app is paired with, the connect step's `same_phone`
+      decides.
+      - `true`: the app acts for its own registration. A `rekey` crosses
+        apps through the `rekey` route of §13.2.
+      - `false`: refused as another phone's.
+      - Absent: a code naming another record is refused, saying it may be
+        another app's on this phone that has not yet told the site its phone.
+   3. From a site the app is not paired with, a `sync` code is refused. A
+      `rekey` code brings that site back through the `enrol` route of §9.1,
+      which gives the record named the new key:
+      - on an app paired nowhere, as its home site: a restored phone;
+      - on an app paired with other sites, as one more beside them, unless
+        the connect step's `app_id` names another app.
+      A re-key never moves a pairing from one site to another.
 
 ### 13.2 The connect step
 
 Optional, and served by verify but not by this repository's backend.
 
 ```
-POST <url>/api/v1/device/connect/    {"code": "..."}
+POST <url>/api/v1/device/connect/    {"code": "...", "phone": "<base64, 16 bytes>"}
 ```
 
+`phone`, the asking phone's id for this site (§13.3), is OPTIONAL. It is sent
+only with a `sync` or `rekey` QR, whose `op` the client has read; a pairing
+code's host learns nothing it need not.
+
 Answers the operation, the device and label it concerns, what the owner may
-read, and an `endpoints` map naming where `enrol`, `challenge`, `keys` and the
-feed of §13 live. Where it is published, that map is authoritative — it exists
-so a path can move without re-flashing a fleet. Where the route is absent
+read, and an `endpoints` map naming where `enrol`, `rekey`, `challenge`, `keys`
+and the feed of §13 live. Where it is published, that map is authoritative — it
+exists so a path can move without re-flashing a fleet. Where the route is absent
 (404), the payload is taken at face value, which is what a ticket QR meant
 before the step existed.
+
+For a code that names a device the answer adds:
+- `app` and `app_id`: that record's app, by name and bundle id;
+- `same_phone`, a boolean, **only** when the request carried `phone` and the
+  record has a phone id of its own. It is left out, never false, when either
+  is unknown, so a record that has not yet told its phone is not called
+  another phone's. The record's phone id itself is never returned.
+
+**The `rekey` route** takes the body of a pairing (§9.1) with a `rekey` code,
+plus `device_id`: the scanning app's own registration with the site. The record
+the code re-keys must be that one, and the answer names it.
+- It exists so that a server from before phones answers 404 rather than
+  re-key the record the code names, another app's.
+- A client uses it only for a re-key that crosses apps, and takes the answer
+  only if it names its own `device_id`.
 
 **Connecting spends nothing.** The code is consumed by the endpoint that
 performs the operation, so a client MAY connect on scan purely to show a
@@ -732,6 +799,48 @@ confirmation screen before committing to anything.
 never existed, names the wrong operation or points at a revoked device.
 Implementations MUST NOT distinguish them: telling them apart tells somebody
 feeding in guesses which ones were real.
+
+### 13.3 The phone
+
+One handset can run more than one app of an implementation: a development
+build beside a store build, or two apps of one publisher. Each holds its own
+keys and its own device record at each site, so without more a site sees one
+phone as two, and a code made for one app's record reads as another phone's in
+the other. The **phone id** lets a site see one phone.
+
+**The secret.** 32 random bytes, made by whichever of the implementation's apps
+first needs it and kept on the handset where all of them can read it and
+nothing else can (on iOS, a Keychain access group of the publisher's team).
+It never leaves the handset, is never backed up to another one, and is never
+changed once made: an app that cannot read it sends no phone id rather than
+make a second. It survives an app's reset, since the other apps share it.
+
+**The id a site is told** is derived for that site alone:
+
+```
+phone_id = HMAC-SHA256(secret, "CL03 phone " ‖ host)[0:16]
+```
+
+`host` is the site's host as the device recorded it at pairing, lowercased,
+in UTF-8. Two sites therefore hold unrelated ids for one handset and cannot
+tell from them that they share it. It travels as `"phone"`, base64 of the 16
+bytes. Vectors, secret = the bytes 0x00 to 0x1f:
+
+| host | phone_id |
+|---|---|
+| `verify.example.ph` | `ec70779f987ad69c4f0d77d89a051810` |
+| `clik-dev.example.ph` | `56dc6d1d996bcc163e69c595ee2ca9ff` |
+
+**What a site may do with it**, within one owner's records only: show the
+records that share it as one phone; let any of them close out a `sync` code
+made for another; send a `rekey` code's new key to the scanning app's own
+record on that phone; and retire an app's earlier record on the phone once a
+newer pairing of the same app there has synced.
+
+**What it never does.** It authorises nothing, unlocks no key and decides no
+verdict or trust: the device's Enclave signature, App Attest and the ticket do
+all of that, as before. A record without one, from a device that sends none,
+is a phone of its own.
 
 ## 14. Revocation feed
 
@@ -904,7 +1013,7 @@ The plaintext is a UTF-8 JSON object:
 | `seq` | int | equal to the header's `seq` |
 | `prev` | string | lowercase hex of SHA-256 of the **sealed** record before this one; 64 zeros for the first |
 | `at` | int | milliseconds since the Unix epoch, by the device's clock |
-| `event` | string | `[a-z_]{1,40}`: `pair`, `sync`, `revocations`, `unlock`, `lock`, `scan`, `portrait`, `attachment`, `clock`, `settings`, `log_send`, `org_select`, `trust`, `site` |
+| `event` | string | `[a-z_]{1,40}`: `pair`, `sync`, `revocations`, `unlock`, `lock`, `scan`, `portrait`, `attachment`, `clock`, `settings`, `log_send`, `org_select`, `trust`, `site`, `history` |
 | `outcome` | string | `success`, `failure` or `notice` |
 | `build` | string | the app's version and build |
 | `detail` | object | at most 32 keys; values are short strings, integers, booleans or null |
@@ -922,6 +1031,12 @@ id (claim `0x01`), which the issuing server can resolve, and a National ID by
 which of its codes was read (`philid_card`, `ephilid`,
 `digital_national_id`, `digital_id_number`, `card_number`), never by its
 number. A server MUST accept event names it does not know.
+
+A `history` event is about the device's scan history (§18), a list the
+device can read and export, which this log is not. `detail.action` is `on`,
+`off`, `opened`, `exported` or `cleared`, and `detail.scans` is how many
+scans it concerned. It records that a copy of such a list was opened or left
+the device, never what was in it.
 
 `prev` is over the sealed bytes, so the server checks the chain without
 trusting anything it decrypted. The chain runs across uploads: the device
@@ -1249,3 +1364,406 @@ nothing and are not counted.
 
 A cap of 2 leaves a credential and its portrait, with attachments inline only.
 `attachments.part_budget` turns a cap into the part symbols it leaves.
+
+## 18. Scan history file
+
+A device MAY keep a **scan history**: a list of its own scans that it can
+open and export, beside the activity log (§15) and never in its place
+(DESIGN §11m). This section is the exported file, `CL03SH` version 1.
+`ios/OfflineVerifier/ScanHistoryFile.swift` is the reference.
+
+The file is **not evidence**. It is unsigned, anybody who holds it can edit
+it, and it says so. The record of what a device did is the activity log on
+its site's server.
+
+### 18.1 The document
+
+One UTF-8 JSON object, its keys sorted at every level.
+
+| key | type | |
+|---|---|---|
+| `format` | string | `CL03SH` |
+| `version` | int | `1`. A reader MUST refuse a version it does not know |
+| `signed` | bool | always `false` |
+| `build` | string | the app's version and build |
+| `exported_at` | string | when the file was written (§18.3) |
+| `time_zone` | string | the device's time zone, an IANA name |
+| `utc_offset_minutes` | int | its offset from UTC when the file was written |
+| `scope` | object | what the file covers (§18.4) |
+| `retention` | object | `days` and `max_records`: how far back the device keeps a scan, and how many for a site. So a short file is not read as a quiet month |
+| `sites` | array | each site in the file, the home site first: `host`, `home` (bool) and `records` (int) |
+| `key_files` | array | each key file the file's records were read with: `id` (§19.2) and `records` (int). Empty when there is none |
+| `count` | int | the number of records, for a reader to check |
+| `records` | array | the records (§18.2), oldest first |
+| `demo` | bool | `true` in a file of Demo samples; absent otherwise |
+
+### 18.2 A record
+
+Every key is present on every record, with `null` where it has nothing to
+say.
+
+| key | type | |
+|---|---|---|
+| `at` | string | when the code was read, by the device's clock (§18.3) |
+| `site` | string or null | the host of the site the scan is recorded under: the one whose keys opened the code, or the session's site when none did. `null` in a file of samples, and when a key file's keys opened the code |
+| `key_file` | string or null | the id of the key file whose keys opened the code (§19.2), as 64 lower-case hex digits. `null` otherwise |
+| `org` | object or null | `id` and `name` of the organization the session was for, when it is that site's own (§16.3) |
+| `document` | string | `credential` or `national_id` |
+| `national_id` | string or null | which National ID code was read, by its name in §15.2 |
+| `credential_id` | string or null | claim `0x01` as a UUID in lowercase. Present only when the credential's signature verified |
+| `verdict` | string | the verdict of §11, or `unverified` for a National ID code whose signature could not be checked |
+| `result` | string | what the screen said (below) |
+| `result_title` | string | the title the screen showed, in English, without a date |
+| `photo` | string or null | `matched`, `not_checked` or `does_not_match`; `null` when the document carries no photo this device could check |
+
+A record MUST NOT carry personal data: no name, birth date, age band, ID
+number or hash of one, photo, validity date, device name, or free text. A
+National ID is recorded by which of its codes was read, never by its number.
+
+`result` is one of:
+
+| `result` | title | `verdict` |
+|---|---|---|
+| `verified` | Verified | `valid` |
+| `verified_photo_not_checked` | Verified, photo not checked | `valid` |
+| `verified_check_online` | Verified, check online | `valid` |
+| `verified_key_file` | Verified by key file | `valid` |
+| `photo_does_not_match` | Photo does not match | `valid` |
+| `expired` | Expired | `expired` |
+| `not_yet_valid` | Not yet valid | `not_yet_valid` |
+| `not_genuine` | Not genuine | `forged` |
+| `altered` | Altered | `tampered` |
+| `not_readable` | Not readable | `malformed` |
+| `phone_needs_sync` | This phone needs to sync | `device_stale` |
+| `key_file_ended` | Key file ended | `device_stale` |
+| `no_matching_key` | No matching key | `device_stale` or `tampered` |
+| `read_not_verified` | Read, not verified | `unverified` |
+| `number_only` | Number only | `unverified` |
+| `not_finished` | Not finished | as it stood |
+
+`no_matching_key` is what a verifier shows when none of its keys opens the
+code and it does not judge the code by its epoch (§11). `verdict` keeps what §8 gave.
+`not_finished` is a code that was read and whose result never reached the
+screen. `verified_key_file` is a pass read with an anchored key file's key
+(§19.5), its photo checked or not, as `photo` says; a photo that does not
+match is `photo_does_not_match`, whatever key read the code.
+`key_file_ended` is a code a key file's keys opened after the file ended:
+whoever sent the file sends a newer one, so the screen never says to sync.
+In a
+file of samples each code is prefixed `sample_`
+(`sample_verified`) and each title begins "Demo:", so a sample is never
+counted as a check.
+
+### 18.3 Times
+
+Every time in the file is UTC, in the form `2026-11-15T06:22:07.375Z`, to
+the millisecond. `time_zone` and `utc_offset_minutes` say where the device
+was, and the days in `scope` are that zone's.
+
+### 18.4 What the file covers
+
+`scope.kind` is `day` with `date`, `range` with `from` and `to`, or `all`.
+The dates are the device's own days, as `2026-11-15`.
+
+When the list was narrowed before it was exported, `scope.filters` says how:
+`result` (`Verified`, `Qualified`, `Refused` or `No verdict`), `site` (a
+host), `organization` (a name) and `credential_id_contains` (the text
+searched for), each present only when it applied. A file with `filters` is a
+part of what its dates held, and MUST NOT be read as all of it.
+
+The file is named
+`ovx-scan-history_<host, all-sites or demo>_<yyyymmddThhmmssZ>.json`.
+
+## 19. Key file
+
+A **key file** carries what a verifier needs to read one issuer's CL03 codes
+without a site: the reading keys of some epochs (§7) and the issuer's signing
+keys, each with its certificates. It is how codes made on a workstation, or by
+an issuer that runs no site, are read (DESIGN §11r). A verifier MAY accept key
+files. One that does presents what it reads with one as §19.5 says.
+
+`ovcrypto/keyfile.py` is the reference. Where this section and the module
+disagree, the module is correct and this section is a bug.
+`vectors/keyfile.json` pins it, with a case for every refusal, and
+`scripts/make-key-file.py` makes key files on a workstation. OVX's reader,
+`ios/OVX/KeyFiles`, agrees with it on every case (DESIGN §11r).
+
+A key file is named `<name>.cl03key` and sent as `application/octet-stream`:
+the extension, not a media type, tells a phone what it is.
+
+### 19.1 The file
+
+```
+"CL03KF" 6 | version 1 | reserved 1
+| issuedAt 4 | notAfter 4
+| nameLen 1 | name N
+| epochCount 1 | { epoch 4 | tier 1 | notBefore 4 | notAfter 4 } *
+| trustCount 1 | { keyId 4 | notBefore 4 | notAfter 4
+                 | certCount 1 | { derLen 2 | DER } * } *
+| kdf 1 | iterations 4 | salt 16 | nonce 12
+| sealed (32 × epochCount + 16)
+```
+
+Everything before `sealed` is the **clear part**. A verifier can show it
+before it has the passphrase, and nothing in it is secret. `sealed` holds the
+epochs' reading keys, in the order the clear part lists the epochs:
+
+```
+key    = PBKDF2-HMAC-SHA256(passphrase, salt, iterations, 32)
+sealed = AES-256-GCM(key, nonce, plaintext = { key 32 } × epochCount,
+                     aad = the clear part)                 ciphertext ‖ tag (16)
+```
+
+- `version` is 1 and `reserved` 0.
+- `name` is UTF-8, 1 to 64 bytes: what the verifier calls the file. It
+  identifies nothing (§19.3).
+- `notAfter` is the file's end. `notAfter` − `issuedAt` MUST be above zero
+  and at most 31 days (2,678,400 s), a bundle's longest lease (§9).
+- `epochCount` is 1 to 32. Each (`epoch`, `tier`) appears once, `tier` 0
+  public or 1 restricted, and an epoch with a restricted key has its public
+  one too, since §8 opens the public section first. An epoch's `notBefore`
+  and `notAfter` are informational, as a bundle's are (§9).
+- `trustCount` is 1 to 16. Each `keyId` appears once, with `notBefore` <
+  `notAfter`, and has 1 to 3 certificates, the leaf first, each issued by the
+  one after it. A pinned CA is never in the file, as in §9.1.
+- `kdf` 1 is PBKDF2-HMAC-SHA256, the only one. `iterations` is 600,000 to
+  2,000,000, so that opening a file takes a phone seconds at most. The
+  passphrase is the UTF-8 of its NFC form.
+- A key in the plaintext is a raw X25519 private key, as a bundle's `wrapped`
+  key is once unwrapped (§9).
+
+A verifier MUST refuse a file that breaks any of these, or that has bytes
+after `sealed`.
+
+A maker of key files MUST draw `salt` and `nonce` at random for each file and
+MUST refuse a passphrase under 12 characters. It SHOULD end the file no later
+than its leaves' certificates end. The passphrase reaches the verifier by some
+other way than the file does.
+
+### 19.2 Who stands behind it
+
+Each trust entry is judged at the trusted time, and is one of two kinds:
+
+- **Certified**: its certificate validates to one of the build's pinned CAs
+  by §9.2's rule, directly or through an Organization CA (a site's System CA
+  in docs/MANAGED-PKI.md). Such a CA names its site's domain, which a site's
+  bundle is matched against. A key file has no paired site, so the domain is
+  shown, not matched. It is vouched for, as a key from a site is.
+- **Anchored**: its chain ends in a self-signed certificate inside the file,
+  the **anchor**, which is the leaf itself for a self-signed key. Each
+  certificate's signature MUST verify by the next one's key, and the anchor's
+  by its own. Each MUST be valid at the trusted time and be ECDSA P-256,
+  signed with SHA-256 or SHA-384. A CA certificate in the chain, the anchor
+  of a longer one included, MUST have basicConstraints CA and `keyCertSign`.
+  The leaf MUST meet what §9.2 asks of a credential's key: `digitalSignature`,
+  not a CA, the credential EKU and no unknown critical extension. An anchored
+  entry's window MUST lie inside its leaf's validity.
+
+An entry's key is its leaf's: a key file carries no key apart from its
+certificates.
+
+A file's entries MUST be all certified or all anchored, and an anchored
+file's entries MUST share one anchor. A verifier MUST refuse any other file,
+and one with an entry of neither kind. A key file never vouches for a bundle,
+a revocation feed or a log key statement: its keys sign credentials only.
+
+A verifier MUST refuse a file with a leaf that carries the infrastructure EKU.
+That is a site's deployment key, which belongs on its site's signer and never
+in a file that is sent around.
+
+The **fingerprint** of an anchored file is the SHA-256 of its anchor's DER
+SPKI, shown as 16 groups of 4 upper-case hex digits. It is what a person
+compares with the sender's.
+
+A file's **id** is its fingerprint when anchored, and the SHA-256 of its first
+entry's leaf's DER SPKI when certified.
+
+A deny-list (§9.2) withdraws a key file's entry by fingerprint only, from
+whichever site's bundle it came. A key id is its own deployment's, and the
+same number in a key file names another key. An entry is refused when its
+leaf's fingerprint is denied, or, when certified, its Organization CA's. An
+anchored file whose anchor's fingerprint is denied is refused whole.
+
+§8 step 6 holds for both kinds: when the leaf names an organization,
+`issuer_id` MUST equal it.
+
+### 19.3 Accepting one
+
+A verifier:
+
+1. reads the clear part, and refuses a file that §19.1 or §19.2 refuses, whose
+   `notAfter` has passed by the trusted clock, or whose `issuedAt` is later
+   than the trusted clock's now + 300 s. Without that bound, a file dated
+   ahead would outlive §19.1's 31 days;
+2. shows, before it asks for the passphrase, the name; the leaf's
+   organization (`O`) and common name, as the file states them; who certified
+   the leaf: the pinned CA, "itself" for a self-signed key, or the anchor's
+   common name; the fingerprint of an anchored file; the epochs and tiers it
+   opens; and its end;
+3. opens `sealed` with the passphrase. A failure is reported as a wrong
+   passphrase or a changed file, which it cannot tell apart, and nothing is
+   kept. Success shows that the clear part is what the passphrase's holder
+   sealed;
+4. asks for the device owner's authentication, as for a pairing;
+5. keeps the reading keys only wrapped by its own Secure Enclave key, as a
+   bundle's are, keeps the clear part, and discards the file and the
+   passphrase.
+
+A file is known by its id (§19.2); its name identifies nothing. A file with
+the id of one the verifier holds replaces that one when its `issuedAt` is
+later, and is refused otherwise.
+
+### 19.4 Reading with one
+
+A key file is a key source of its own, beside the sites (DESIGN §11k). A code
+whose public section one of its reading keys opens is checked against that
+file's trust entries alone, the ones §19.2 accepted (§8, step 4), never a
+site's, and a site's codes are never checked against a file's. When a site's key and a file's both open
+a code, the site's reading is taken.
+
+The file stops reading at its `notAfter`, and an entry at its leaf
+certificate's end, both by the trusted clock, as a bundle's lease does.
+Nothing renews it but a newer file.
+
+A key file has no revocation filter, so §8 step 10 never flags a code read
+with one. It has no log key either: what it reads goes into no site's
+activity log (§15).
+
+### 19.5 Presenting a result
+
+A result read with an **anchored** key MUST NOT be presented as one that a
+site or a pinned CA vouches for. It is:
+- never in the color or under the title of a plain pass;
+- named for its key file;
+- never said to be issued by the organization the certificate names. That is
+  the file's own claim, which nobody has checked: the document was signed by
+  the key in the file.
+
+Its verdict (§11) is unchanged. `valid` read with an anchored key is still
+`valid`, presented as a pass with a qualification, and a refusal is presented
+as the refusal it is, naming the key file.
+
+A result read with a **certified** key is presented as a site's is, naming the
+pinned CA as the issuer's certifier and, through an Organization CA, that
+CA's domain. It MUST also carry a band, in the color of a pass with a
+qualification, that says it was read with a key file, and it names the key
+file in place of the site. So every result read with a key file carries that
+color somewhere.
+
+In the scan history (§18.2), a record read with a key file has `site` null and
+`key_file` set. `valid` read with an anchored key is `verified_key_file`,
+"Verified by key file".
+
+## 20. Site list
+
+A reader MAY be made to trust only **supported sites**: hosts it may pair
+with, each with its **anchors**, the CAs and any raw keys allowed to vouch
+for keys there (§9.2).
+- The reader's build compiles in its default sites, the host it takes site
+  lists from, and the CA that certifies their key.
+- A site list adds sites and withdraws them.
+- **Hosts.** A reader takes a site's host from the address it paired with,
+  lowercased.
+  - A host that is an IP address is never supported.
+  - So is one that, once lowercased, is not ASCII letters, digits, hyphens
+    and dots.
+
+This section is a design until `ovcrypto/sitelist.py` and its vectors exist.
+
+```
+"CL03SL" 6 | version 1 | reserved 1
+| issuedAt 4 | notAfter 4
+| entryCount 2 | { action 1 | patternLen 1 | pattern N
+                 | nameLen 1 | name N
+                 | caCount 1 | { derLen 2 | der N } * } *
+| sig 64
+```
+
+Integers are big-endian and unsigned. Times are seconds since 1970-01-01 UTC,
+as in §9.
+
+Signed bytes are `"OfflineVerifier/v1/site-list" 0x00` followed by everything
+from `"CL03SL"` through the last entry. `sig` uses §6.1's encoding, and is
+made by the key of the certificate sent beside the list.
+
+- **`action`** is one of two values. Any other refuses the list.
+  - **1 adds a site**, with `caCount` of 1 to 4.
+  - **2 withdraws a pattern**, with `nameLen` 0 and `caCount` 0.
+- **`pattern`** is a host name or a wildcard.
+  - **A host name:**
+    - has two labels or more, each 1-63 lowercase letters, digits or
+      hyphens, neither starting nor ending with a hyphen;
+    - takes a label beginning `xn--` as written: an A-label, never decoded;
+    - has a last label that is not all digits, so no IPv4 address is one;
+    - has no trailing dot, and is at most 253 bytes.
+  - **A wildcard** is `*.` followed by such a host name. It matches a host
+    with exactly one more label in front: `*.example.org` matches
+    `a.example.org`, but neither `example.org` nor `a.b.example.org`.
+- **`name`** is what a reader shows for an added site: UTF-8, 1-64 bytes, with
+  no code point in Unicode's categories Cc, Cf, Zl or Zp.
+- **`der`** is a CA certificate, at most 4096 bytes.
+  - It is judged when it vouches for a key, at the trusted time, as a pinned
+    CA is: basicConstraints with cA true, key usage `keyCertSign`, and a P-256
+    key.
+- **Order and size.**
+  - Entries are in ascending byte order of `pattern`, each pattern once.
+  - A list has 0 to 1024 entries, and is at most 256 KiB.
+
+### 20.1 Transport
+
+`GET /api/v1/site-list/`, on the host the build names, answers
+`{"list": "<base64 CL03SL>", "chain": ["<base64 DER certificate>"]}`.
+- `chain` holds exactly one certificate, the list key's. The CA the build
+  compiles is never sent.
+- The request carries no identifier and no cookie.
+
+### 20.2 Client rules
+
+A reader MUST refuse a list unless all of these hold:
+
+1. **The certificate.** `chain` holds exactly one certificate. It validates
+   at the trusted time directly under the CA the build compiles for site
+   lists, and under no other. It has:
+   - ECDSA P-256 with SHA-256 or SHA-384;
+   - key usage with `digitalSignature`, critical or not;
+   - basicConstraints absent, or with cA false;
+   - the site-list EKU `2.25.195449750565970907562665581081746257696`, and
+     neither of §9.2's two EKUs;
+   - no unknown critical extension;
+   - a subjectAltName whose dNSNames include the build's list host,
+     compared whole as lowercase ASCII, with no wildcard.
+2. **The signature.** `sig` verifies over the signed bytes with that key.
+3. **The parse.** The list parses whole, with nothing after `sig`:
+   `version` 1, `reserved` 0, every `action` known, every pattern and name
+   as above, the entries in order, and within the limits.
+4. **The window.** `issuedAt` ≤ now + 300 s, `notAfter` > `issuedAt`, and
+   `notAfter` − `issuedAt` ≤ 31 days.
+5. **The order.** `issuedAt` is later than the held list's, unless the list
+   is byte for byte the one held.
+
+An accepted list replaces the one held. The reader keeps it through a reset.
+A CA certificate the reader cannot parse drops only itself, and an addition
+left with none. The rest of the list stands.
+
+### 20.3 Supported sites
+
+For a host H, a reader works from the build's defaults and the list it
+holds:
+
+1. **Candidates** are the build's default patterns that match H, and the
+   list's entries that match H. If any default pattern matches H, the list's
+   additions are left out.
+2. **The most specific candidate decides:** an exact host before a wildcard,
+   and a withdrawal before a default of the same pattern.
+3. **The result.**
+   - If that candidate is a withdrawal, or there is no candidate, H is not
+     supported.
+   - Otherwise H's anchors are that entry's: its CAs, and for a default, the
+     raw keys the build binds to it.
+4. **An ended list.** Once now > the held list's `notAfter`, its additions
+   no longer count. Its withdrawals still do.
+
+At a supported site, the reader judges bundles, feeds and statements (§9.2,
+§14, §15.1) with H's anchors in place of the build's. H is the host the
+reader paired with. The reader pairs, syncs and re-keys with no other host,
+and reads no code with a site that is not supported.

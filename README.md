@@ -11,10 +11,11 @@ This repository hosts the CL03 specification, published under
 ## The specification
 
 <!-- editions:begin -->
-The current edition is **v1.2** (wire format v1, 12 November 2026). Read it in [SPEC.md](SPEC.md), or as printed:
+The current edition is **v1.3** (wire format v1, 18 November 2026). Read it in [SPEC.md](SPEC.md), or as printed:
 
 | Edition | Date | As printed |
 |---|---|---|
+| v1.3 | 18 November 2026 | [PDF, A4](pdf/cl03-spec%20-%20v1.3%20-%20A4.pdf) · [PDF, Letter](pdf/cl03-spec%20-%20v1.3%20-%20Letter.pdf) |
 | v1.2 | 12 November 2026 | [PDF, A4](pdf/cl03-spec%20-%20v1.2%20-%20A4.pdf) · [PDF, Letter](pdf/cl03-spec%20-%20v1.2%20-%20Letter.pdf) |
 | v1.1 | 12 November 2026 | [PDF, A4](pdf/cl03-spec%20-%20v1.1%20-%20A4.pdf) · [PDF, Letter](pdf/cl03-spec%20-%20v1.1%20-%20Letter.pdf) |
 <!-- editions:end -->
