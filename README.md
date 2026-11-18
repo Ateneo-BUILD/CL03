@@ -40,6 +40,9 @@ in every credential.
 | §13 | The ticket QR, which hands a phone one operation: enrol, sync or re-key |
 | §15, §16 | The device's activity log, and the organizations a device works for |
 | §17 | Attachments, carried inside the credential or split across part symbols |
+| §18 | The scan history file a device may export of its own scans. It is not evidence |
+| §19 | The key file, with which a verifier reads one issuer's codes without a site |
+| §20 | The site list, a signed list of the sites a reader may pair with (a design in this edition) |
 
 ### In brief
 
@@ -73,7 +76,8 @@ implementation**.
 on the App Store. It reads a CL03 code with the camera and validates it on
 the phone, offline. A phone is paired with an organization's site, keeps
 that organization's keys up to date, and can then show the details a
-document carries for it.
+document carries for it. Since version 1.1 it also reads codes with a key
+file (§19), without a site, and marks every result read that way.
 
 ### Systems
 
