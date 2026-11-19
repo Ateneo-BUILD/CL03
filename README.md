@@ -66,11 +66,11 @@ in every credential.
 
 ## Implementations
 
-The offline verification system built on this specification, the reader app
+The offline verification system built on this specification, the reader apps
 together with the sites that issue the credentials, is **the CL03
 implementation**.
 
-### Reader
+### Readers
 
 **[OVX CL03 Reader](https://apps.apple.com/app/id6835029462)**, for iPhone,
 on the App Store. It reads a CL03 code with the camera and validates it on
@@ -78,6 +78,11 @@ the phone, offline. A phone is paired with an organization's site, keeps
 that organization's keys up to date, and can then show the details a
 document carries for it. Since version 1.1 it also reads codes with a key
 file (§19), without a site, and marks every result read that way.
+
+**[VerifyX - CL03 Reader](https://apps.apple.com/app/id6835014849)**, for
+iPhone, on the App Store. It reads and validates a CL03 code as OVX does,
+offline, but pairs only with the sites it supports, and judges every key a
+site sends with that site's own trust anchors (§20). It takes no key file.
 
 ### Systems
 
