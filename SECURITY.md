@@ -43,6 +43,8 @@ runs it:
 
 - **OVX CL03 Reader**: its
   [support page](https://ritchielozada.com/verifyx/support/).
+- **VerifyX - CL03 Reader**: its
+  [support page](https://verify.x.trl.ph/static/branding/verifyx/support.html).
 - **A site that issues CL03 credentials**: the organization that operates it.
 
 If you cannot tell whether a flaw is in the specification or in an
